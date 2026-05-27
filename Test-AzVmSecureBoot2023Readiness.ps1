@@ -21,11 +21,13 @@
       - https://learn.microsoft.com/windows-hardware/manufacture/desktop/windows-secure-boot-key-creation-and-management-guidance
       - https://techcommunity.microsoft.com/category/azure (Action recommended bulletins)
 
-.PARAMETER SubscriptionId
-    One or more subscription IDs. If omitted, every enabled subscription in the tenant is evaluated.
-
 .PARAMETER TenantId
-    (Optional) Azure tenant to use. Useful when the account has access to multiple tenants.
+    (Required) Azure tenant ID. The script authenticates against this tenant and only
+    evaluates subscriptions belonging to it.
+
+.PARAMETER SubscriptionId
+    One or more subscription IDs within the tenant. If omitted, every enabled subscription
+    in the tenant is evaluated.
 
 .PARAMETER OutputCsvPath
     (Optional) Path to a CSV file where the report will be written.
@@ -39,10 +41,10 @@
     chargeable depending on Run Command usage.
 
 .EXAMPLE
-    .\Test-AzVmSecureBoot2023Readiness.ps1 -OutputCsvPath .\sb2023-report.csv
+    .\Test-AzVmSecureBoot2023Readiness.ps1 -TenantId 00000000-0000-0000-0000-000000000000 -OutputCsvPath .\sb2023-report.csv
 
 .EXAMPLE
-    .\Test-AzVmSecureBoot2023Readiness.ps1 -TenantId <guid> -DeepCheck -Verbose
+    .\Test-AzVmSecureBoot2023Readiness.ps1 -TenantId 00000000-0000-0000-0000-000000000000 -DeepCheck -Verbose
 
 .NOTES
     Requires an authenticated Azure CLI (az): run 'az login' first.
@@ -51,11 +53,12 @@
 
 [CmdletBinding()]
 param(
-    [Parameter()]
-    [string[]] $SubscriptionId,
+    [Parameter(Mandatory)]
+    [ValidateNotNullOrEmpty()]
+    [string] $TenantId,
 
     [Parameter()]
-    [string] $TenantId,
+    [string[]] $SubscriptionId,
 
     [Parameter()]
     [string] $OutputCsvPath,
@@ -104,13 +107,21 @@ try {
 #region --- Helpers ---
 
 function Assert-AzCli {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)] [string] $TenantId)
     $cmd = Get-Command az -ErrorAction SilentlyContinue
     if (-not $cmd) {
         throw "Azure CLI (az) not found. Install it from: https://aka.ms/installazurecli"
     }
-    $null = az account show --only-show-errors 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Not authenticated. Run 'az login' before executing this script."
+    $current = & az account show --only-show-errors -o json 2>$null | ConvertFrom-Json -ErrorAction SilentlyContinue
+    if (-not $current -or $current.tenantId -ne $TenantId) {
+        Write-Host "Authenticating to tenant $TenantId ..." -ForegroundColor Yellow
+        & az login --tenant $TenantId --only-show-errors -o none
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to authenticate to tenant $TenantId."
+        }
+    } else {
+        Write-Verbose "Already authenticated to tenant $TenantId as $($current.user.name)."
     }
 }
 
@@ -127,10 +138,11 @@ function Invoke-Az {
 }
 
 function Get-TargetSubscriptions {
-    param([string[]] $SubscriptionId, [string] $TenantId)
-    $args = @('account','list','--all')
-    if ($TenantId) { $args += @('--query', "[?tenantId=='$TenantId']") }
-    $all = Invoke-Az -Args $args
+    param(
+        [Parameter(Mandatory)] [string] $TenantId,
+        [string[]] $SubscriptionId
+    )
+    $all = Invoke-Az -Args @('account','list','--all','--query', "[?tenantId=='$TenantId']")
     if (-not $all) { return @() }
     $enabled = $all | Where-Object { $_.state -eq 'Enabled' }
     if ($SubscriptionId) {
@@ -298,16 +310,11 @@ function Get-VmSecureBootReport {
 #region --- Main ---
 
 try {
-    Assert-AzCli
+    Assert-AzCli -TenantId $TenantId
 
-    if ($TenantId) {
-        Write-Verbose "Setting active tenant: $TenantId"
-        $null = az account set --tenant $TenantId --only-show-errors 2>$null
-    }
-
-    $subs = Get-TargetSubscriptions -SubscriptionId $SubscriptionId -TenantId $TenantId
+    $subs = Get-TargetSubscriptions -TenantId $TenantId -SubscriptionId $SubscriptionId
     if (-not $subs -or $subs.Count -eq 0) {
-        Write-Warning 'No enabled subscription found for evaluation.'
+        Write-Warning "No enabled subscription found in tenant $TenantId for evaluation."
         return
     }
 

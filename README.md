@@ -32,27 +32,53 @@ If the 2023 CA is present, the VM is no longer flagged at risk.
 
 ```powershell
 # Fast scan (control plane only)
-.\Test-AzVmSecureBoot2023Readiness.ps1 -OutputCsvPath .\sb2023-report.csv
+.\Test-AzVmSecureBoot2023Readiness.ps1 -TenantId <tenant-guid> -OutputCsvPath .\sb2023-report.csv
 
-# Filter by tenant
-.\Test-AzVmSecureBoot2023Readiness.ps1 -TenantId <tenant-guid> -Verbose
+# Limit to specific subscriptions inside the tenant
+.\Test-AzVmSecureBoot2023Readiness.ps1 -TenantId <tenant-guid> -SubscriptionId <sub-guid>
 
 # Deep in-guest verification (slower, requires VMs running)
-.\Test-AzVmSecureBoot2023Readiness.ps1 -DeepCheck -OutputCsvPath .\sb2023-report.csv
+.\Test-AzVmSecureBoot2023Readiness.ps1 -TenantId <tenant-guid> -DeepCheck -OutputCsvPath .\sb2023-report.csv
 
 # Pipe results: only at-risk VMs
-.\Test-AzVmSecureBoot2023Readiness.ps1 | Where-Object AtRisk | Format-Table
+.\Test-AzVmSecureBoot2023Readiness.ps1 -TenantId <tenant-guid> | Where-Object AtRisk | Format-Table
 ```
+
+> The script validates that `az` is signed in to the specified tenant. If not, it runs
+> `az login --tenant <TenantId>` automatically.
 
 ### Parameters
 
-| Parameter         | Description                                                                 |
-|-------------------|-----------------------------------------------------------------------------|
-| `-SubscriptionId` | One or more subscription IDs. Omit to scan all enabled subscriptions.       |
-| `-TenantId`       | Target tenant (useful for multi-tenant accounts).                           |
-| `-OutputCsvPath`  | Path to write the report as CSV.                                            |
-| `-IncludeStopped` | Include deallocated/stopped VMs (default: on).                              |
-| `-DeepCheck`      | Run in-guest Secure Boot DB inspection via Run Command.                     |
+| Parameter         | Required | Description                                                       |
+|-------------------|----------|-------------------------------------------------------------------|
+| `-TenantId`       | Yes      | Azure tenant to authenticate against and scope subscriptions to.  |
+| `-SubscriptionId` | No       | One or more subscription IDs within the tenant.                   |
+| `-OutputCsvPath`  | No       | Path to write the report as CSV.                                  |
+| `-IncludeStopped` | No       | Include deallocated/stopped VMs (default: on).                    |
+| `-DeepCheck`      | No       | Run in-guest Secure Boot DB inspection via Run Command.           |
+
+## Sample run
+
+```
+PS> .\Test-AzVmSecureBoot2023Readiness.ps1 -TenantId 1d70d939-06d2-4348-b658-58cb38886348
+
+Starting Secure Boot 2023 readiness scan...
+Subscriptions to evaluate: 4
+
+[1/4] Subscription: ME-MngEnvMCAP266581-lramoscostah-3 (...)
+  -> Listing VMs...
+     No VMs found.
+[2/4] Subscription: ME-MngEnvMCAP266581-lramoscostah-4 (...)
+  -> Listing VMs...
+     1 VM(s) total, 1 Windows VM(s).
+  [OK] Kami-Vm                                  type:TrustedLaunch sb:on vtpm:on created:2025-06-12
+
+=== Secure Boot 2023 Readiness Summary ===
+Windows VMs evaluated     : 1
+Created before 2024-04-01 : 0
+Secure Boot enabled       : 1
+VMs flagged AT RISK       : 0
+```
 
 ## Output fields
 
